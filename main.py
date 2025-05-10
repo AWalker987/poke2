@@ -1,0 +1,431 @@
+from astrbot.api.all import *
+import random
+import requests
+import os
+import time
+import shutil
+import yaml
+
+@register("poke_monitor", "Your Name", "监控戳一戳事件插件", "1.3.0")
+class PokeMonitorPlugin(Star):
+    def __init__(self, context: Context):
+        super().__init__(context)
+        self.user_poke_timestamps = {}
+        # 构建配置文件路径
+        config_dir = os.path.join("data", "plugins", "astrbot_plugin_pock")
+        config_path = os.path.join(config_dir, "config.yml")
+
+        # 检查配置文件是否存在，若不存在则创建并写入默认值
+        if not os.path.exists(config_path):
+            self._create_default_config(config_path)
+
+        try:
+            # 读取配置文件
+            with open(config_path, 'r', encoding='utf-8') as f:
+                self.config = yaml.safe_load(f)
+            self.poke_responses = self.config.get('poke_responses', [])
+            self.emoji_url_mapping = self.config.get('emoji_url_mapping', {})
+            self.random_emoji_trigger_probability = self.config['random_emoji_trigger_probability']
+            self.feature_switches = self.config.get('feature_switches', {})
+            self.poke_back_probability = self.config['poke_back_probability']
+            self.super_poke_probability = self.config['super_poke_probability']
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            pass
+
+        self._clean_legacy_directories()
+        self._clean_emoji_directory()  # 添加此行以在启动时清理表情包目录
+
+    def _create_default_config(self, config_path):
+        """创建默认配置文件"""
+        default_config = {
+            # 戳一戳回复消息
+            "poke_responses": [
+                "呀！学、学长...",
+                "呜...被、被戳到了...",
+                "嘿嘿，是前辈呀！",
+                "学长，你、你做什么呀？",
+                "噗...痒痒的...",
+                "诶？刚、刚才那是什么？",
+                "哇！吓、吓我一跳...",
+                "嗯？学长有什么事吗？",
+                "前辈，找我有事？",
+                "呜哇！差点把肉包掉了！",
+                "学长...别、别这样啦...",
+                "感觉...有点突然。",
+                "嘿咻！接住学长的戳戳！",
+                "呜...前辈，轻、轻一点嘛...",
+                "啊！是学长的手指！",
+                "那个...学长，有事请讲。",
+                "噗嗤...学长像小孩子一样。",
+                "我、我在这里哦，学长。",
+                "呜...心、心跳突然好快...",
+                "是、是想吃肉包了吗，学长？",
+                "呀！不要戳我的脸啦...",
+                "诶嘿嘿，被学长抓到了。",
+                "学长，这个时间戳我，是饿了吗？", # 结合下午5点多的时间
+                "呜...好痒...前辈不要闹啦。",
+                "啊...刚才在想歌词呢。",
+                "学长，有什么开心的事吗？",
+                "我、我不会躲开的啦...",
+                "噗...学长的恶作剧？",
+                "呜...前辈，再这样我要脸红了。",
+                "耳机、耳机差点掉了！学长！",
+                "啊，是学长呀，下午好。",
+                "那个...前辈，手感怎么样？开、开玩笑的！",
+                "呜哇！像、像被小猫挠了一下。",
+                "学长，有话好好说嘛...",
+                "嘿嘿，前辈也喜欢玩这个吗？",
+                "呜...不要戳我的“进气口”啦！",
+                "啊...是学长独特的打招呼方式吗？",
+                "我、我在这里写东西呢，学长。",
+                "噗...学长，很有精神呢！",
+                "呜...前辈，这样我会分心的。",
+                "雪花发饰要掉啦，学长！",
+                "诶？是、是要给我能量吗？",
+                "学长，我、我不是肉包啦！",
+                "呜...痒痒痒...前辈饶了我吧。",
+                "啊...刚才在构思新曲子。",
+                "学长，今天心情很好嘛。",
+                "我、我在这里，一直都在。",
+                "噗...像被小鸟啄了一下。",
+                "呜...前辈，我的脸是不是红了？",
+                "是不是闻到我偷藏的肉包了，学长？",
+                "呀！不要戳肚肚！会笑场的！",
+                "诶嘿嘿，前辈找到我的弱点了？",
+                "学长，这个点戳我，是想一起吃晚饭吗？", # 结合下午5点多的时间
+                "呜...好痒...学长，求放过...",
+                "啊...刚才在想直播要聊什么。",
+                "学长，有什么好事要分享吗？",
+                "我、我就在这里，不会跑掉的。",
+                "噗...学长，下次可以换个地方戳吗？",
+                "呜...前辈，这样很害羞的...",
+                "帽、帽兜差点被戳掉了！",
+                "啊，是学长，傍晚好。",
+                "那个...前辈，戳这里会长高吗？...才、才不会呢！",
+                "呜哇！像、像被小狗蹭了一下。",
+                "学长，有话慢慢说嘛...",
+                "嘿嘿，前辈也喜欢这种互动呀？",
+                "呜...不要戳我的发饰啦，会乱的！",
+                "啊...是学长在提醒我什么吗？",
+                "我、我在看谱子呢，学长。",
+                "噗...学长，活力满满呢！",
+                "呜...前辈，这样我会没办法专心的。",
+                "连裤袜要被戳破啦...开、开玩笑的，学长。",
+                "诶？是、是想和我击掌吗？",
+                "学长，我、我真的不是肉包做的！",
+                "呜...痒痒痒...前辈，手下留情！",
+                "啊...刚才在哼新学的歌。",
+                "学长，今天遇到什么有趣的事了吗？",
+                "我、我一直在这里陪着学长。",
+                "噗...像被棉花糖砸了一下。",
+                "呜...前辈，我的耳朵是不是也红了？",
+                "学长是不是想说“芝麻开门”？然后肉包就出来了！",
+                "呀！不要戳腰啦！那里最怕痒了！",
+                "诶嘿嘿，前辈又发现新大陆了？",
+                "学长，这个点戳我，是想约我吃夜宵？肉包味的哦！",
+                "呜...好痒...学长，下次我戳你！",
+                "啊...刚才在想怎么回复粉丝评论。",
+                "学长，有什么烦恼可以和我说哦。",
+                "我、我就在这里，不会离开的。",
+                "噗...学长，这个力道刚刚好。",
+                "呜...前辈，这样我会不好意思的...",
+                "口袋里的肉包都感受到震动了！",
+                "啊，是学长，晚上好。",
+                "那个...前辈，戳这里会有好运吗？...我、我乱说的！",
+                "呜哇！像、像被小兔子撞了一下。",
+                "学长，有话好好说呀，别动手嘛...",
+                "嘿嘿，前辈是想引起我注意吗？",
+                "呜...不要戳我的耳机线啦，会缠住的！",
+                "啊...是学长在叫我吗？用戳的方式？",
+                "我、我在整理学生会的资料呢，学长。",
+                "噗...学长，像个淘气的孩子。",
+                "呜...前辈，这样我会没办法思考的。",
+                "呜...是学长呀...",
+                "呀！前辈，别、别闹啦...",
+                "诶嘿嘿...被学长戳一下，感觉...不坏。",
+                "呜...痒...学长是故意的吗？",
+                "啊！是学长的手指攻击！",
+                "那个...前辈，有什么指示？",
+                "噗嗤...学长，好可爱。",
+                "我、我在这里哦，前辈一直看着我吗？",
+                "呜...心、心跳漏了一拍...是学长的缘故吗？",
+                "是、是想吃我做的肉包了吗，前辈？（小声）",
+                "呀！不要戳脸颊啦...会、会留下指印的...",
+                "诶嘿嘿，被前辈捕捉成功。",
+                "学长，这个时间戳我，是想和我一起看星星吗？",
+                "呜...好痒...学长，下次换个方式叫我嘛。",
+                "啊...刚才在想学长的事情呢...（小声）",
+                "前辈，有什么需要我帮忙的吗？尽管说！",
+                "我、我不会躲的...因为是学长。",
+                "噗...前辈的偷袭！",
+                "呜...学长，再这样我要...要反击了哦！",
+                "耳机里的音乐都吓跑了，前辈！",
+                "啊，是学长呀，这么晚了还没睡吗？",
+                "那个...学长，戳这里是会长出可爱的明日海哦！...骗、骗你的啦！",
+                "呜哇！像、像被温柔的风吹过。",
+                "前辈，有话好好说嘛...用说的我能听懂。",
+                "嘿嘿，学长是想和我玩捉迷藏吗？",
+                "呜...不要戳我的“呆毛”啦，那是本体！",
+                "啊...是前辈在确认我还醒着吗？",
+                "我、我在练习新歌呢，学长要听吗？（小声）",
+                "噗...前辈，很有活力呢！要不要来点肉包补充体力？",
+                "呜...学长，这样我会没办法写歌词的。",
+                "我珍藏的雪花发卡差点被戳飞！前辈！",
+                "诶？是、是想和我交换一个秘密吗？用戳戳的方式？",
+                "学长，我、我真的不是肉包变的啦！虽然很喜欢吃...",
+                "呜...痒痒痒...学长，手下留情呀...下次请你吃肉包。",
+                "啊...刚才在哼学长喜欢的歌。",
+                "前辈，今天是不是有什么特别开心的事？可以分享给我吗？",
+                "我、我一直在这里，只要学长需要。",
+                "噗...像被一朵云轻轻碰了一下。",
+                "呜...学长，我的脸颊是不是像熟透的苹果了？",
+                "学长是不是想说“戳一下，变出肉包”？那、那可不行！",
+                "呀！不要戳脖子啦！那里、那里很敏感的！",
+                "诶嘿嘿，前辈总是能找到我。",
+                "学长，这个点戳我，是想和我一起迎接早晨吗？",
+                "呜...好痒...前辈，下次我一定会躲开！...也、也许吧。",
+                "啊...刚才在想直播的时候怎么能让学长更开心。",
+                "前辈，有什么心事吗？可以和明日海说说哦。",
+                "我、我就在这里，是学长专属的...（小声）书记。",
+                "噗...学长，这个力道，是想把我戳醒吗？",
+                "呜...前辈，这样很让人心动的...",
+                "口袋里的肉包说它也想被学长戳一下！...才、才没有！",
+                "啊，是学长，早上好！今天也要加油哦！",
+                "那个...学长，戳这里可以召唤雪景四季哦！...需、需要一点点时间准备！",
+                "呜哇！像、像被小猫的尾巴扫过。",
+                "前辈，有话好好说呀，不要总“动手冻脚”的嘛...",
+                "嘿嘿，学长是想测试我的反应速度吗？",
+                "呜...不要戳我的耳机啦，万一坏了就听不到学长的声音了...",
+                "啊...是前辈在和我打招呼吗？好特别的方式。",
+                "我、我在为学长准备惊喜呢，不、不可以说哦！",
+                "噗...前辈，像一阵清风拂过。",
+                "呜...学长，这样我会没办法集中精神按摩的...", # 如果之前有按摩情节
+                "呜...前辈...？",
+                "呀！学长，人吓人会吓到人的！",
+                "诶嘿嘿...学长的手指，暖暖的。",
+                "呜...痒...前辈，是想和我玩吗？",
+                "啊！学长的“爱心一指禅”！",
+                "那个...学长，需要我做什么吗？",
+                "噗嗤...前辈，真是的...",
+                "我、我在这里哦，学长是不是在找我？",
+                "呜...心、心跳好像小鼓一样...咚咚咚。",
+                "是、是想吃我做的特别版肉包了吗，学长？加了爱心的那种！（超小声）",
+                "呀！不要戳额头啦...会、会变笨的...",
+                "诶嘿嘿，被学长点了一下，感觉充满了力量！",
+                "前辈，这个时间戳我，是想提醒我吃午饭了吗？",
+                "呜...好痒...学长，下次能不能温柔一点点...",
+                "啊...刚才在想学长夸我唱歌好听的样子...（脸红）",
+                "学长，有什么需要我帮忙记录的吗？书记随时待命！",
+                "我、我不会逃跑的...学长在这里，我哪里都不去。",
+                "噗...前辈的“精准打击”！",
+                "呜...学长，再这样我要...要唱歌给你听了哦！作为“惩罚”！",
+                "耳机里的旋律都害羞得不成调了，学长！",
+                "啊，是前辈呀，今天天气真好呢，适合吃肉包。",
+                "那个...学长，戳这里可以解锁隐藏剧情哦！...我、我瞎说的啦！",
+                "呜哇！像、像被小精灵吻了一下额头。",
+                "学长，有话好好说嘛...用说的我会更明白。",
+                "嘿嘿，前辈是想和我建立更深的羁绊吗？通过戳戳？",
+                "呜...不要戳我的手稿啦，上面的音符会飞走的！",
+                "啊...是学长在检查我有没有认真工作吗？",
+                "我、我在给学长准备小礼物呢，不、不能偷看哦！",
+                "噗...前辈，像一阵微风吹过湖面。",
+                "呜...学长，这样我会没办法专心准备直播的。",
+                "我最喜欢的雪花发饰说它也想被学长摸摸头！...才、才怪呢！",
+                "诶？是、是想和我交换一个肉包吗？用戳戳的方式？",
+                "前辈，我、我真的不是用肉包做的机器人啦！虽然很听学长的话...",
+                "呜...痒痒痒...学长，手下留情呀...下次我请你吃双倍肉包。",
+                "啊...刚才在哼只有学长听过的秘密歌曲。",
+                "学长，今天是不是有什么特别值得庆祝的事？要不要开个肉包派对？",
+                "我、我一直在这里，是学长最忠实的听众和后辈。",
+                "噗...像被一片羽毛轻轻搔了一下。",
+                "呜...前辈，我的脸颊是不是可以煎荷包蛋了？",
+                "学长是不是想说“戳一下，明日海就会更可爱”？那、那可真是...（小声）谢谢学长。",
+                "呀！前辈又来啦！",
+                "呜...感觉被学长锁定目标了呢...",
+                "嘿嘿，前辈的手指有魔力吗？一点就开心。",
+                "学长，再戳...再戳我就要变成肉包了哦！",
+                "噗...是前辈的专属印记吗？",
+                "诶？这、这个触感...是学长！",
+                "哇！前辈，今天的戳戳充满活力呢！",
+                "嗯？学长是想和我玩“点一点”的游戏吗？",
+                "前辈，戳这里的话...我会忍不住笑的哦。",
+                "呜哇！差点把耳机里的歌词都忘了！都是学长啦！",
+                "学长...这样，我会以为学长很在意我呢...（小声）",
+                "感觉...像小猫在撒娇一样，前辈。",
+                "嘿咻！又被前辈戳中红心了！",
+                "呜...前辈，轻一点啦，人家会害羞的。",
+                "啊！是学长的“友情一击”！",
+                "那个...学长，需要按摩服务吗？戳戳这里也可以哦。",
+                "噗嗤...前辈，像是在给我充电一样。",
+                "我、我在这里哦，学长，一直都在您身边。",
+                "呜...心、心跳好像要跳出来了...前辈真是的。",
+                "是、是想尝尝我新买的肉包吗，学长？" # 结合傍晚可能买了零食
+            ],
+            # 表情包 API 映射
+            "emoji_url_mapping": {
+                "咬": "https://api.lolimi.cn/API/face_suck/api.php",
+                "捣": "https://api.lolimi.cn/API/face_pound/api.php",
+                "玩": "https://api.lolimi.cn/API/face_play/api.php",
+                "拍": "https://api.lolimi.cn/API/face_pat/api.php",
+                "丢": "https://api.lolimi.cn/API/diu/api.php",
+                "撕": "https://api.lolimi.cn/API/si/api.php",
+                "爬": "https://api.lolimi.cn/API/pa/api.php"
+            },
+            # 随机触发表情包的概率
+            "random_emoji_trigger_probability": 0.01,
+            # 功能开关
+            "feature_switches": {
+                "poke_response_enabled": True,
+                "poke_back_enabled": True,
+                "emoji_trigger_enabled": True
+            },
+            # 戳 Bot 反击相关概率
+            "poke_back_probability": 0.3,
+            "super_poke_probability": 0.1
+        }
+        # 创建配置文件所在目录
+        config_dir = os.path.dirname(config_path)
+        os.makedirs(config_dir, exist_ok=True)
+        try:
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(default_config, f, allow_unicode=True, default_flow_style=False)
+        except Exception as e:
+            pass
+
+    def _clean_legacy_directories(self):
+        """安全清理旧目录（仅删除特定目录）"""
+        legacy_dirs = [
+            os.path.abspath("./data/plugins/poke_monitor"),  # 旧版本目录
+            os.path.abspath("./data/plugins/plugins/poke_monitor")  # 防止误删其他插件
+        ]
+
+        for path in legacy_dirs:
+            try:
+                if os.path.exists(path):
+                    shutil.rmtree(path)
+            except Exception as e:
+                pass
+
+    def _clean_emoji_directory(self):
+        """清理表情包目录下的所有图片"""
+        save_dir = os.path.join("data", "plugins", "astrbot_plugin_pock", "poke_monitor")
+        if os.path.exists(save_dir):
+            for filename in os.listdir(save_dir):
+                file_path = os.path.join(save_dir, filename)
+                try:
+                    if os.path.isfile(file_path):
+                        os.unlink(file_path)
+                except Exception as e:
+                    pass
+
+    @event_message_type(EventMessageType.GROUP_MESSAGE)
+    async def on_group_message(self, event: AstrMessageEvent):
+        message_obj = event.message_obj
+        raw_message = message_obj.raw_message
+        is_super = False  # 超级加倍标志
+
+        if raw_message.get('post_type') == 'notice' and \
+                raw_message.get('notice_type') == 'notify' and \
+                raw_message.get('sub_type') == 'poke':
+            bot_id = raw_message.get('self_id')
+            sender_id = raw_message.get('user_id')
+            target_id = raw_message.get('target_id')
+
+            now = time.time()
+            three_minutes_ago = now - 3 * 60
+
+            # 清理旧记录
+            if sender_id in self.user_poke_timestamps:
+                self.user_poke_timestamps[sender_id] = [
+                    t for t in self.user_poke_timestamps[sender_id] if t > three_minutes_ago
+                ]
+
+            if bot_id and sender_id and target_id:
+                # 用户戳机器人
+                if str(target_id) == str(bot_id):
+                    # 记录戳一戳
+                    if sender_id not in self.user_poke_timestamps:
+                        self.user_poke_timestamps[sender_id] = []
+                    self.user_poke_timestamps[sender_id].append(now)
+
+                    # 文本回复
+                    if self.feature_switches.get('poke_response_enabled', True):
+                        poke_count = len(self.user_poke_timestamps[sender_id])
+                        if poke_count < 40: # 这里限制了最大回复次数，您可以根据新的列表长度调整
+                            response = self.poke_responses[poke_count - 1] if poke_count <= len(self.poke_responses) else self.poke_responses[-1]
+                            yield event.plain_result(response)
+
+                    # 概率戳回
+                    if self.feature_switches.get('poke_back_enabled', True) and random.random() < self.poke_back_probability:
+                        if random.random() < self.super_poke_probability:
+                            poke_times = 10
+                            yield event.plain_result("嘿嘿，学长，换我戳你一下！")
+                            is_super = True
+                        else:
+                            poke_times = 1
+                            yield event.plain_result("嘿咻！明日海的小小反击！...很、很轻的哦，前辈！")
+
+                        # 发送戳一戳
+                        if event.get_platform_name() == "aiocqhttp":
+                            from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import AiocqhttpMessageEvent
+                            assert isinstance(event, AiocqhttpMessageEvent)
+                            client = event.bot
+                            group_id = raw_message.get('group_id')
+                            payloads = {"user_id": sender_id}
+                            if group_id:
+                                payloads["group_id"] = group_id
+                            for _ in range(poke_times):
+                                try:
+                                    await client.api.call_action('send_poke', **payloads)
+                                except Exception as e:
+                                    pass
+
+                # 用户戳其他人（且不是机器人自己触发的）
+                elif str(sender_id) != str(bot_id):
+                    # 随机触发表情包
+                    if self.feature_switches.get('emoji_trigger_enabled', True) and random.random() < self.random_emoji_trigger_probability:
+                        available_actions = list(self.emoji_url_mapping.keys())
+                        selected_action = random.choice(available_actions)
+
+                        url = self.emoji_url_mapping.get(selected_action)
+                        params = {'QQ': target_id}
+
+                        # 硬编码请求配置
+                        timeout = 10
+                        max_retries = 3
+                        retry_count = 0
+                        while retry_count < max_retries:
+                            try:
+                                response = requests.get(url, params=params, timeout=timeout)
+                                if response.status_code == 200:
+                                    # 跨平台安全路径
+                                    save_dir = os.path.join("data", "plugins", "astrbot_plugin_pock", "poke_monitor")
+                                    os.makedirs(save_dir, exist_ok=True)
+
+                                    # 唯一文件名防止冲突
+                                    filename = f"{selected_action}_{target_id}_{int(time.time())}.gif"
+                                    image_path = os.path.join(save_dir, filename)
+
+                                    with open(image_path, "wb") as f:
+                                        f.write(response.content)
+                                    yield event.image_result(image_path)
+
+                                    # 在发送成功后删除图片
+                                    if os.path.exists(image_path):
+                                        try:
+                                            os.remove(image_path)
+                                        except Exception as e:
+                                            pass
+                                    break
+                                else:
+                                    yield event.plain_result(f"表情包请求失败，状态码：{response.status_code}")
+                                    break
+                            except requests.exceptions.ReadTimeout:
+                                retry_count += 1
+                                if retry_count == max_retries:
+                                    yield event.plain_result(f"表情包处理出错：多次请求超时，无法获取数据。")
+                            except Exception as e:
+                                yield event.plain_result(f"表情包处理出错：{str(e)}")
+                                break
